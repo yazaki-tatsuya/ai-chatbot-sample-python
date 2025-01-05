@@ -1,0 +1,236 @@
+<!-- static/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Azure Speech AI Chat</title>
+  <!-- Azure Cognitive Services Speech SDK JS (CDN) -->
+  <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 50px; }
+    #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
+    .message { margin: 10px 0; }
+    .user { color: blue; }
+    .ai { color: green; }
+    button { padding: 10px 20px; margin: 5px; }
+    #status { margin-top: 10px; }
+    #result { margin-top: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Azure Speech AIチャットアプリ</h1>
+  <div id="chat"></div>
+  <button id="startBtn">音声認識開始</button>
+  <button id="stopBtn" disabled>音声認識停止</button>
+  <p id="status"></p>
+  <p id="result"></p>
+
+  <script>
+    let audioConfig, speechRecognizer;
+
+    document.getElementById("startBtn").onclick = async function() {
+      document.getElementById("status").innerText = "トークン取得中...";
+
+      try {
+        // サーバー(Flask)からトークンとリージョンをGET
+        let resp = await fetch("/token");
+        let data = await resp.json();
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        let token = data.token;
+        let region = data.region;
+
+        // JavaScript SDKのSpeechConfigをToken連携モードで作成
+        let speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
+        speechConfig.speechRecognitionLanguage = "ja-JP"; // 必要に応じて
+
+        // マイクアクセス(ユーザーが「許可」する必要あり)
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // AudioConfig.fromDefaultMicrophoneではなく、SDKのマイク取得機能に任せる方法もあるが、
+        // 一部環境では getUserMedia() でストリームを確保→ createAudioConfig() するやり方が安定。
+        audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+
+        // SpeechRecognizerを作成
+        speechRecognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+        document.getElementById("status").innerText = "音声認識を開始します...";
+
+        // 認識開始イベント
+        speechRecognizer.sessionStarted = (s, e) => {
+          console.log("sessionStarted");
+          document.getElementById("status").innerText = "録音中...(話してください)";
+        };
+
+        // 認識途中のイベント (部分的な結果)
+        speechRecognizer.recognizing = (s, e) => {
+          console.log("Recognizing:", e.result.text);
+          document.getElementById("result").innerText = "途中結果: " + e.result.text;
+        };
+
+        // 認識確定イベント (最終結果)
+        speechRecognizer.recognized = (s, e) => {
+          console.log("Recognized:", e.result);
+          if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
+            document.getElementById("result").innerText = "最終結果: " + e.result.text;
+            addMessage(e.result.text, 'user'); // ユーザーのメッセージをチャットに追加
+            sendMessageToAI(e.result.text); // AIにメッセージを送信
+          } else {
+            document.getElementById("result").innerText = "認識できませんでした";
+          }
+        };
+
+        // セッション終了(マイク停止など)
+        speechRecognizer.sessionStopped = (s, e) => {
+          console.log("sessionStopped");
+          document.getElementById("status").innerText = "認識セッションが終了しました。";
+          document.getElementById("stopBtn").disabled = true;
+          document.getElementById("startBtn").disabled = false;
+        };
+
+        // エラーイベント
+        speechRecognizer.canceled = (s, e) => {
+          console.warn("canceled", e);
+          document.getElementById("status").innerText = "キャンセルまたはエラー";
+          document.getElementById("stopBtn").disabled = true;
+          document.getElementById("startBtn").disabled = false;
+        };
+
+        // 実際に認識開始
+        speechRecognizer.startContinuousRecognitionAsync();
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = false;
+      } catch (err) {
+        console.error(err);
+        document.getElementById("status").innerText = "エラー: " + err.message;
+      }
+    };
+
+    document.getElementById("stopBtn").onclick = function() {
+      if (speechRecognizer) {
+        speechRecognizer.stopContinuousRecognitionAsync(
+          () => {
+            console.log("stop success");
+            document.getElementById("status").innerText = "認識停止";
+            document.getElementById("stopBtn").disabled = true;
+            document.getElementById("startBtn").disabled = false;
+          },
+          (err) => {
+            console.error("stop error", err);
+            document.getElementById("status").innerText = "停止中にエラーが発生";
+          }
+        );
+      }
+    };
+
+    function addMessage(message, sender) {
+      const chatDiv = document.getElementById('chat');
+      const messageDiv = document.createElement('div');
+      messageDiv.classList.add('message', sender);
+      messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'AI'}:</strong> ${message}`;
+      chatDiv.appendChild(messageDiv);
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    async function sendMessageToAI(message) {
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ message: message })
+        });
+
+        const data = await response.json();
+        if (data.error) {
+          addMessage(data.error, 'ai');
+        } else {
+          addMessage(data.ai, 'ai');
+        }
+      } catch (err) {
+        console.error(err);
+        addMessage('サーバーとの通信中にエラーが発生しました。', 'ai');
+      }
+    }
+  </script>
+</body>
+</html>
+
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>AIチャットアプリ</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; }
+        #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
+        .message { margin: 10px 0; }
+        .user { color: blue; }
+        .ai { color: green; }
+        button { padding: 10px 20px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>AIとチャット</h1>
+    <div id="chat"></div>
+    <button id="record">録音開始</button>
+    <button id="stop" disabled>録音停止</button>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        const recordButton = document.getElementById('record');
+        const stopButton = document.getElementById('stop');
+        const chatDiv = document.getElementById('chat');
+
+        recordButton.addEventListener('click', async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.start();
+            recordButton.disabled = true;
+            stopButton.disabled = false;
+
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+        });
+
+        stopButton.addEventListener('click', () => {
+            mediaRecorder.stop();
+            recordButton.disabled = false;
+            stopButton.disabled = true;
+
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                audioChunks = [];
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'voice.wav');
+
+                // ユーザーのメッセージを表示
+                chatDiv.innerHTML += `<div class="message user"><strong>You:</strong> ...</div>`;
+                chatDiv.scrollTop = chatDiv.scrollHeight;
+
+                fetch('/api/chat', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        chatDiv.innerHTML += `<div class="message ai"><strong>Error:</strong> ${data.error}</div>`;
+                    } else {
+                        chatDiv.innerHTML += `<div class="message user"><strong>You:</strong> ${data.user}</div>`;
+                        chatDiv.innerHTML += `<div class="message ai"><strong>AI:</strong> ${data.ai}</div>`;
+                    }
+                    chatDiv.scrollTop = chatDiv.scrollHeight;
+                })
+                .catch(err => {
+                    chatDiv.innerHTML += `<div class="message ai"><strong>Error:</strong> サーバーとの通信中にエラーが発生しました。</div>`;
+                    chatDiv.scrollTop = chatDiv.scrollHeight;
+                });
+            };
+        });
+    </script>
+</body>
+</html> -->
