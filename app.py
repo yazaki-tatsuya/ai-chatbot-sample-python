@@ -17,7 +17,7 @@ OPENAI_API_KEY = env_production.get_env_variable("OPENAI_API_KEY")
 @app.route("/")
 def index():
     # ルートアクセスで static/index.html を返す
-    return send_from_directory("templates", "index.html")
+    return send_from_directory("static", "index.html")
 
 @app.route("/token", methods=["GET"])
 def get_speech_token():
@@ -55,32 +55,34 @@ def get_speech_token():
 @app.route("/api/chat", methods=["POST"])
 def chat():
     """
-    ユーザーからのテキストを受け取り、OpenAIのAPIを使用してAIの応答を返すエンドポイント。
+    ユーザーからのメッセージと会話履歴を受け取り、OpenAIのAPIを使用してAIの応答を返すエンドポイント。
     """
     # OpenAIの設定
     openai.api_key = env_production.get_env_variable("OPENAI_API_KEY")
     try:
         data = request.get_json()
-        if not data or 'message' not in data:
-            return jsonify({'error': 'No message provided'}), 400
+        if not data or 'conversation' not in data:
+            return jsonify({'error': 'No conversation provided'}), 400
 
-        user_message = data['message']
-        print(f"User message: {user_message}")
+        conversation = data['conversation']
+        if not isinstance(conversation, list):
+            return jsonify({'error': 'Conversation should be a list'}), 400
+
+        # システムメッセージを先頭に追加
+        messages = [
+            {"role": "system", "content": "あなたは役立つAIアシスタントです。"}
+        ]
+
+        messages.extend(conversation)  # 会話履歴を追加
 
         # OpenAI GPT-4との対話
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "あなたは役立つAIアシスタントです。"},
-                {"role": "user", "content": user_message}
-                # {"role": "user", "content": "こんにちは"}
-            ],
-            max_tokens=150
+            messages=messages,
+            max_tokens=300
         )
         ai_text = response['choices'][0]['message']['content'].strip()
-        print(f"AI response: {ai_text}") 
-
-        return jsonify({'user': user_message, 'ai': ai_text})
+        return jsonify({'ai': ai_text})
 
     except Exception as e:
         return jsonify({'error': 'サーバー内部でエラーが発生しました。'}), 500
@@ -88,74 +90,3 @@ def chat():
 if __name__ == "__main__":
     # ローカルデバッグ用
     app.run(debug=True, host="0.0.0.0", port=5000)
-
-
-# from flask import Flask, request, jsonify, render_template
-# import azure.cognitiveservices.speech as speechsdk
-# import openai
-# import os
-# import uuid
-# import tempfile  # 追加
-# import env_production
-
-# app = Flask(__name__)
-
-# # 環境変数からAPIキーとリージョンを取得
-# AZURE_SPEECH_KEY = env_production.get_env_variable("AZURE_SPEECH_KEY")
-# AZURE_SERVICE_REGION = env_production.get_env_variable("AZURE_SPEECH_REGION")
-# # OPENAI_API_KEY = env_production.get_env_variable("OPENAI_API_KEY")
-
-# # OpenAIの設定
-# # openai.api_key = OPENAI_API_KEY
-
-# # 音声認識の設定
-# speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SERVICE_REGION)
-
-# @app.route('/')
-# def index():
-#     return render_template('index.html')
-
-# @app.route('/api/chat', methods=['POST'])
-# def chat():
-#     if 'audio' not in request.files:
-#         return jsonify({'error': 'No audio file provided'}), 400
-
-#     audio_file = request.files['audio']
-#     audio_filename = f"temp_{uuid.uuid4()}.wav"
-#     # 修正箇所: 一時ディレクトリをOSに依存せず取得
-#     audio_path = os.path.join(tempfile.gettempdir(), audio_filename)
-#     audio_file.save(audio_path)
-
-#     # 音声ファイルをテキストに変換
-#     audio_input = speechsdk.AudioConfig(filename=audio_path)
-#     speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_input)
-
-#     result = speech_recognizer.recognize_once()
-
-#     # 一時ファイルの削除
-#     os.remove(audio_path)
-
-#     if result.reason != speechsdk.ResultReason.RecognizedSpeech:
-#         return jsonify({'error': '音声が認識されませんでした。'}), 400
-
-#     user_text = result.text
-
-#     # OpenAI GPT-4との対話
-#     try:
-#         response = "AIとの対話は未実装です。"
-#         # response = openai.ChatCompletion.create(
-#         #     model="gpt-4",
-#         #     messages=[
-#         #         {"role": "system", "content": "あなたは役立つAIアシスタントです。"},
-#         #         {"role": "user", "content": user_text}
-#         #     ],
-#         #     max_tokens=150
-#         # )
-#         # ai_text = response['choices'][0]['message']['content'].strip()
-#     except Exception as e:
-#         return jsonify({'error': 'AIとの対話中にエラーが発生しました。'}), 500
-
-#     return jsonify({'user': user_text, 'ai': ai_text})
-
-# if __name__ == '__main__':
-#     app.run(debug=True)
