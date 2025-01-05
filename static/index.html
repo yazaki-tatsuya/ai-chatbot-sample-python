@@ -4,6 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Azure Speech AI Chat</title>
+  <!-- Faviconのリンクを追加 -->
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon" />
+  
   <!-- Azure Cognitive Services Speech SDK JS (CDN) -->
   <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
   <style>
@@ -173,6 +176,7 @@
 
     async function sendMessageToAI() {
       try {
+        console.log("aaaaaaaaaaaaaaa");
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
@@ -187,10 +191,37 @@
           addMessage(data.error, 'ai');
         } else {
           addMessage(data.ai, 'ai');
+          // TTSリクエストを送信
+          await sendTTSRequest(data.ai);
+          console.log("sendTTSRequest");
         }
       } catch (err) {
         console.error(err);
         addMessage('サーバーとの通信中にエラーが発生しました。', 'ai');
+      }
+    }
+
+    async function sendTTSRequest(text) {
+      try {
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ text: text })
+        });
+
+        if (!response.ok) {
+          throw new Error('TTSリクエストに失敗しました。');
+        }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.play();
+      } catch (err) {
+        console.error(err);
+        addMessage('音声再生中にエラーが発生しました。', 'ai');
       }
     }
   </script>
