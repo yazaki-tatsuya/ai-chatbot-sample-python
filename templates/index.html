@@ -27,9 +27,11 @@
 
   <script>
     let audioConfig, speechRecognizer;
+    let accumulatedText = ''; // 認識結果を蓄積する変数
 
     document.getElementById("startBtn").onclick = async function() {
       document.getElementById("status").innerText = "トークン取得中...";
+      accumulatedText = ''; // 認識開始前に蓄積テキストをリセット
 
       try {
         // サーバー(Flask)からトークンとリージョンをGET
@@ -44,6 +46,13 @@
         // JavaScript SDKのSpeechConfigをToken連携モードで作成
         let speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
         speechConfig.speechRecognitionLanguage = "ja-JP"; // 必要に応じて
+
+        // タイムアウト設定の変更
+        // EndSilenceTimeoutMs を30秒に設定（デフォルトは5000ms）
+        speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "30000");
+
+        // 初期無音タイムアウトも延長（必要に応じて）
+        speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "10000");
 
         // マイクアクセス(ユーザーが「許可」する必要あり)
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -65,6 +74,7 @@
         speechRecognizer.recognizing = (s, e) => {
           console.log("Recognizing:", e.result.text);
           document.getElementById("result").innerText = "途中結果: " + e.result.text;
+          // 部分結果は蓄積しない
         };
 
         // 認識確定イベント (最終結果)
@@ -72,8 +82,9 @@
           console.log("Recognized:", e.result);
           if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
             document.getElementById("result").innerText = "最終結果: " + e.result.text;
-            addMessage(e.result.text, 'user'); // ユーザーのメッセージをチャットに追加
-            sendMessageToAI(e.result.text); // AIにメッセージを送信
+            // addMessage(e.result.text, 'user'); // ユーザーのメッセージをチャットに追加
+            // sendMessageToAI(e.result.text); // AIにメッセージを送信
+            accumulatedText += e.result.text + ' '; // テキストを蓄積
           } else {
             document.getElementById("result").innerText = "認識できませんでした";
           }
@@ -85,6 +96,12 @@
           document.getElementById("status").innerText = "認識セッションが終了しました。";
           document.getElementById("stopBtn").disabled = true;
           document.getElementById("startBtn").disabled = false;
+          
+          if (accumulatedText.trim() !== '') {
+            addMessage(accumulatedText.trim(), 'user'); // ユーザーのメッセージをチャットに追加
+            sendMessageToAI(accumulatedText.trim()); // AIにメッセージを送信
+          }
+          accumulatedText = ''; // 蓄積テキストをリセット
         };
 
         // エラーイベント
@@ -93,6 +110,7 @@
           document.getElementById("status").innerText = "キャンセルまたはエラー";
           document.getElementById("stopBtn").disabled = true;
           document.getElementById("startBtn").disabled = false;
+          accumulatedText = ''; // 蓄積テキストをリセット
         };
 
         // 実際に認識開始
@@ -155,82 +173,3 @@
   </script>
 </body>
 </html>
-
-
-<!-- <!DOCTYPE html>
-<html>
-<head>
-    <title>AIチャットアプリ</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 50px; }
-        #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
-        .message { margin: 10px 0; }
-        .user { color: blue; }
-        .ai { color: green; }
-        button { padding: 10px 20px; margin: 5px; }
-    </style>
-</head>
-<body>
-    <h1>AIとチャット</h1>
-    <div id="chat"></div>
-    <button id="record">録音開始</button>
-    <button id="stop" disabled>録音停止</button>
-
-    <script>
-        let mediaRecorder;
-        let audioChunks = [];
-
-        const recordButton = document.getElementById('record');
-        const stopButton = document.getElementById('stop');
-        const chatDiv = document.getElementById('chat');
-
-        recordButton.addEventListener('click', async () => {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            mediaRecorder.start();
-            recordButton.disabled = true;
-            stopButton.disabled = false;
-
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-        });
-
-        stopButton.addEventListener('click', () => {
-            mediaRecorder.stop();
-            recordButton.disabled = false;
-            stopButton.disabled = true;
-
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                audioChunks = [];
-                const formData = new FormData();
-                formData.append('audio', audioBlob, 'voice.wav');
-
-                // ユーザーのメッセージを表示
-                chatDiv.innerHTML += `<div class="message user"><strong>You:</strong> ...</div>`;
-                chatDiv.scrollTop = chatDiv.scrollHeight;
-
-                fetch('/api/chat', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        chatDiv.innerHTML += `<div class="message ai"><strong>Error:</strong> ${data.error}</div>`;
-                    } else {
-                        chatDiv.innerHTML += `<div class="message user"><strong>You:</strong> ${data.user}</div>`;
-                        chatDiv.innerHTML += `<div class="message ai"><strong>AI:</strong> ${data.ai}</div>`;
-                    }
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                })
-                .catch(err => {
-                    chatDiv.innerHTML += `<div class="message ai"><strong>Error:</strong> サーバーとの通信中にエラーが発生しました。</div>`;
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                });
-            };
-        });
-    </script>
-</body>
-</html> -->

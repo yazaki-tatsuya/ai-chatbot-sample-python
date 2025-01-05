@@ -68,7 +68,6 @@ def chat():
         print(f"User message: {user_message}")
 
         # OpenAI GPT-4との対話
-        print(openai.api_key)
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
