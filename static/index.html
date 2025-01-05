@@ -22,12 +22,14 @@
   <div id="chat"></div>
   <button id="startBtn">音声認識開始</button>
   <button id="stopBtn" disabled>音声認識停止</button>
+  <button id="resetBtn">リセット</button> <!-- リセットボタンの追加 -->
   <p id="status"></p>
   <p id="result"></p>
 
   <script>
     let audioConfig, speechRecognizer;
     let accumulatedText = ''; // 認識結果を蓄積する変数
+    let conversationHistory = []; // 会話履歴を保持する配列
 
     document.getElementById("startBtn").onclick = async function() {
       document.getElementById("status").innerText = "トークン取得中...";
@@ -96,10 +98,11 @@
           document.getElementById("status").innerText = "認識セッションが終了しました。";
           document.getElementById("stopBtn").disabled = true;
           document.getElementById("startBtn").disabled = false;
+          document.getElementById("resetBtn").disabled = false;
           
           if (accumulatedText.trim() !== '') {
             addMessage(accumulatedText.trim(), 'user'); // ユーザーのメッセージをチャットに追加
-            sendMessageToAI(accumulatedText.trim()); // AIにメッセージを送信
+            sendMessageToAI(); // AIにメッセージを送信
           }
           accumulatedText = ''; // 蓄積テキストをリセット
         };
@@ -110,6 +113,7 @@
           document.getElementById("status").innerText = "キャンセルまたはエラー";
           document.getElementById("stopBtn").disabled = true;
           document.getElementById("startBtn").disabled = false;
+          document.getElementById("resetBtn").disabled = false;
           accumulatedText = ''; // 蓄積テキストをリセット
         };
 
@@ -117,6 +121,7 @@
         speechRecognizer.startContinuousRecognitionAsync();
         document.getElementById("startBtn").disabled = true;
         document.getElementById("stopBtn").disabled = false;
+        document.getElementById("resetBtn").disabled = true; // リセットボタンを無効化
       } catch (err) {
         console.error(err);
         document.getElementById("status").innerText = "エラー: " + err.message;
@@ -131,6 +136,7 @@
             document.getElementById("status").innerText = "認識停止";
             document.getElementById("stopBtn").disabled = true;
             document.getElementById("startBtn").disabled = false;
+            document.getElementById("resetBtn").disabled = false;
           },
           (err) => {
             console.error("stop error", err);
@@ -140,6 +146,15 @@
       }
     };
 
+    // リセットボタンの実装
+    document.getElementById("resetBtn").onclick = function() {
+      conversationHistory = []; // 会話履歴をリセット
+      document.getElementById("chat").innerHTML = ''; // チャット表示をクリア
+      document.getElementById("result").innerText = ''; // 認識結果表示をクリア
+      document.getElementById("status").innerText = '会話がリセットされました。';
+      document.getElementById("resetBtn").disabled = true; // リセットボタンを無効化
+    };
+
     function addMessage(message, sender) {
       const chatDiv = document.getElementById('chat');
       const messageDiv = document.createElement('div');
@@ -147,16 +162,24 @@
       messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'AI'}:</strong> ${message}`;
       chatDiv.appendChild(messageDiv);
       chatDiv.scrollTop = chatDiv.scrollHeight;
+
+      // 会話履歴に追加
+      if (sender === 'user') {
+        conversationHistory.push({ role: 'user', content: message });
+      } else if (sender === 'ai') {
+        conversationHistory.push({ role: 'assistant', content: message });
+      }
     }
 
-    async function sendMessageToAI(message) {
+    async function sendMessageToAI() {
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ message: message })
+          // body: JSON.stringify({ message: message })
+          body: JSON.stringify({ conversation: conversationHistory }) // 会話履歴を送信
         });
 
         const data = await response.json();
