@@ -1,12 +1,13 @@
 # app.py
 import os
 import requests
-from flask import Flask, jsonify, send_from_directory, request, Response
+from flask import Flask, jsonify, send_from_directory, request, Response, stream_with_context
 import openai
 from flask_cors import CORS
 import env_production
 import azure.cognitiveservices.speech as speechsdk
 import logging
+import json
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)  # クロスオリジンリクエストを許可
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 AZURE_SPEECH_KEY = env_production.get_env_variable("AZURE_SPEECH_KEY")
 AZURE_SPEECH_REGION = env_production.get_env_variable("AZURE_SPEECH_REGION")
 OPENAI_API_KEY = env_production.get_env_variable("OPENAI_API_KEY")
+
 # OpenAIの設定
 openai.api_key = OPENAI_API_KEY
 
@@ -41,7 +43,6 @@ def get_speech_token():
             return jsonify({"error": "Speech key or region not set"}), 500
 
         # STSトークン発行エンドポイント
-        # https://<region>.api.cognitive.microsoft.com/sts/v1.0/issuetoken
         token_url = f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issuetoken"
 
         headers = {
@@ -66,43 +67,58 @@ def get_speech_token():
 @app.route("/api/chat", methods=["POST"])
 def chat():
     """
-    ユーザーからのメッセージと会話履歴を受け取り、OpenAIのAPIを使用してAIの応答を返すエンドポイント。
+    ユーザーからのメッセージと会話履歴を受け取り、OpenAIのストリーミングAPIを使用してAIの応答をストリーミングで返すエンドポイント。
     """
-    try:
-        data = request.get_json()
-        if not data or 'conversation' not in data:
-            logger.error("No conversation provided")
-            return jsonify({'error': 'No conversation provided'}), 400
+    def generate():
+        try:
+            data = request.get_json()
+            if not data or 'conversation' not in data:
+                logger.error("No conversation provided")
+                yield "data: {\"error\": \"No conversation provided\"}\n\n"
+                return
 
-        conversation = data['conversation']
-        if not isinstance(conversation, list):
-            logger.error("Conversation is not a list")
-            return jsonify({'error': 'Conversation should be a list'}), 400
+            conversation = data['conversation']
+            if not isinstance(conversation, list):
+                logger.error("Conversation is not a list")
+                yield "data: {\"error\": \"Conversation should be a list\"}\n\n"
+                return
 
-        # システムメッセージを先頭に追加
-        messages = [
-            {"role": "system", "content": "あなたは役立つAIアシスタントです。"}
-        ]
+            # システムメッセージを先頭に追加
+            messages = [
+                {"role": "system", "content": "あなたは役立つAIアシスタントです。"}
+            ]
 
-        messages.extend(conversation)  # 会話履歴を追加
+            messages.extend(conversation)  # 会話履歴を追加
 
-        # OpenAI GPT-4との対話
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            max_tokens=300
-        )
-        ai_text = response['choices'][0]['message']['content'].strip()
-        return jsonify({'ai': ai_text})
+            # OpenAI GPT-4との対話（ストリーミング）
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=messages,
+                max_tokens=300,
+                stream=True  # ストリーミングを有効化
+            )
 
-    except Exception as e:
-        logger.exception("Exception in /api/chat endpoint")
-        return jsonify({'error': 'サーバー内部でエラーが発生しました。'}), 500
+            for chunk in response:
+                if 'choices' in chunk:
+                    delta = chunk['choices'][0]['delta']
+                    if 'content' in delta:
+                        content = delta['content']
+                        # JSON形式で部分的なテキストを送信
+                        yield f"data: {json.dumps({'content': content})}\n\n"
+
+            # 最終的なメッセージの送信
+            yield f"data: {json.dumps({'content': '【END】'})}\n\n"
+
+        except Exception as e:
+            logger.exception("Exception in /api/chat endpoint")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 @app.route("/api/tts", methods=["POST"])
 def tts():
     """
-    AIからのテキストを受け取り、Azure TextToSpeechで音声化したデータを返すエンドポイント。
+    AIからの部分的なテキストを受け取り、Azure TextToSpeechで音声化したデータを返すエンドポイント。
     """
     try:
         data = request.get_json()
@@ -115,21 +131,37 @@ def tts():
             logger.error("Text is not a string")
             return jsonify({'error': 'Text should be a string'}), 400
 
+        # 文章の終わりを確認
+        if text.strip() == "【END】":
+            return jsonify({'status': 'completed'}), 200
+
         # Azure Speech SDKの設定
         speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
         speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
         speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
 
+        # 音声出力形式をMP3に設定
+        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
+
+        # SSMLで速度を設定（オプション）
+        ssml = f"""
+        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">
+            <voice name="{speech_config.speech_synthesis_voice_name}">
+                <prosody rate="150%">{text.strip()}</prosody>
+            </voice>
+        </speak>
+        """
+
         # SpeechSynthesizerを作成（音声出力なし）
         synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
-        result = synthesizer.speak_text_async(text).get()
+        result = synthesizer.speak_ssml_async(ssml).get()
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             # SpeechSynthesisResultのaudio_dataを取得
             audio_data = result.audio_data  # バイト列として取得
 
-            # 音声データを返却
-            return Response(audio_data, mimetype="audio/wav")
+            # 音声データを返却（MIMEタイプをaudio/mpegに変更）
+            return Response(audio_data, mimetype="audio/mpeg")
 
         elif result.reason == speechsdk.ResultReason.Canceled:
             cancellation_details = result.cancellation_details

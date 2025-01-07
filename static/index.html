@@ -25,7 +25,7 @@
   <div id="chat"></div>
   <button id="startBtn">音声認識開始</button>
   <button id="stopBtn" disabled>音声認識停止</button>
-  <button id="resetBtn">リセット</button> <!-- リセットボタンの追加 -->
+  <button id="resetBtn">リセット</button>
   <p id="status"></p>
   <p id="result"></p>
 
@@ -33,10 +33,26 @@
     let audioConfig, speechRecognizer;
     let accumulatedText = ''; // 認識結果を蓄積する変数
     let conversationHistory = []; // 会話履歴を保持する配列
+    let accumulatedPartialText = ''; // AIの部分的な応答を蓄積する変数
+
+    // ローカルストレージから会話履歴を読み込む
+    window.onload = function() {
+      const savedHistory = localStorage.getItem('conversationHistory');
+      if (savedHistory) {
+        conversationHistory = JSON.parse(savedHistory);
+        conversationHistory.forEach(msg => addMessage(msg.content, msg.role === 'user' ? 'user' : 'ai'));
+      }
+    };
+
+    // チャット履歴をローカルストレージに保存
+    function saveConversation() {
+      localStorage.setItem('conversationHistory', JSON.stringify(conversationHistory));
+    }
 
     document.getElementById("startBtn").onclick = async function() {
       document.getElementById("status").innerText = "トークン取得中...";
       accumulatedText = ''; // 認識開始前に蓄積テキストをリセット
+      accumulatedPartialText = ''; // AIの部分的な応答もリセット
 
       try {
         // サーバー(Flask)からトークンとリージョンをGET
@@ -59,10 +75,11 @@
         // 初期無音タイムアウトも延長（必要に応じて）
         speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "10000");
 
+        // ノイズ抑制の有効化（オプション）
+        speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EnableNoiseSuppression, "true");
+
         // マイクアクセス(ユーザーが「許可」する必要あり)
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // AudioConfig.fromDefaultMicrophoneではなく、SDKのマイク取得機能に任せる方法もあるが、
-        // 一部環境では getUserMedia() でストリームを確保→ createAudioConfig() するやり方が安定。
         audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
 
         // SpeechRecognizerを作成
@@ -87,8 +104,6 @@
           console.log("Recognized:", e.result);
           if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
             document.getElementById("result").innerText = "最終結果: " + e.result.text;
-            // addMessage(e.result.text, 'user'); // ユーザーのメッセージをチャットに追加
-            // sendMessageToAI(e.result.text); // AIにメッセージを送信
             accumulatedText += e.result.text + ' '; // テキストを蓄積
           } else {
             document.getElementById("result").innerText = "認識できませんでした";
@@ -102,10 +117,10 @@
           document.getElementById("stopBtn").disabled = true;
           document.getElementById("startBtn").disabled = false;
           document.getElementById("resetBtn").disabled = false;
-          
+
           if (accumulatedText.trim() !== '') {
             addMessage(accumulatedText.trim(), 'user'); // ユーザーのメッセージをチャットに追加
-            sendMessageToAI(); // AIにメッセージを送信
+            sendChatAndStreamResponse(accumulatedText.trim()); // AIにメッセージを送信してストリーミング応答を処理
           }
           accumulatedText = ''; // 蓄積テキストをリセット
         };
@@ -156,6 +171,7 @@
       document.getElementById("result").innerText = ''; // 認識結果表示をクリア
       document.getElementById("status").innerText = '会話がリセットされました。';
       document.getElementById("resetBtn").disabled = true; // リセットボタンを無効化
+      localStorage.removeItem('conversationHistory'); // ローカルストレージをクリア
     };
 
     function addMessage(message, sender) {
@@ -172,29 +188,75 @@
       } else if (sender === 'ai') {
         conversationHistory.push({ role: 'assistant', content: message });
       }
+
+      // チャット履歴をローカルストレージに保存
+      saveConversation();
     }
 
-    async function sendMessageToAI() {
+    async function sendChatAndStreamResponse(userMessage) {
       try {
-        console.log("aaaaaaaaaaaaaaa");
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          // body: JSON.stringify({ message: message })
           body: JSON.stringify({ conversation: conversationHistory }) // 会話履歴を送信
         });
 
-        const data = await response.json();
-        if (data.error) {
-          addMessage(data.error, 'ai');
-        } else {
-          addMessage(data.ai, 'ai');
-          // TTSリクエストを送信
-          await sendTTSRequest(data.ai);
-          console.log("sendTTSRequest");
+        if (!response.ok) {
+          throw new Error('チャットリクエストに失敗しました。');
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop(); // 最後の行が未完の可能性があるのでバッファに戻す
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const jsonData = line.replace("data: ", "");
+              try {
+                const data = JSON.parse(jsonData);
+                if (data.error) {
+                  addMessage(data.error, 'ai');
+                  continue;
+                }
+                const content = data.content;
+                if (content === "【END】") {
+                  // 送信が終了したことを示す
+                  if (accumulatedPartialText.trim() !== '') {
+                    await sendTTSRequest(accumulatedPartialText.trim());
+                    accumulatedPartialText = '';
+                  }
+                  continue;
+                }
+
+                // Append to accumulatedPartialText
+                accumulatedPartialText += content;
+
+                // Check for sentence boundary (。、！、？)
+                let sentenceEndIndex;
+                while ((sentenceEndIndex = accumulatedPartialText.search(/[。！？]/)) !== -1) {
+                  const sentence = accumulatedPartialText.slice(0, sentenceEndIndex + 1);
+                  accumulatedPartialText = accumulatedPartialText.slice(sentenceEndIndex + 1);
+                  addMessage(sentence, 'ai'); // AIのメッセージをチャットに追加
+                  await sendTTSRequest(sentence); // 完全な文をTTSに送信
+                }
+
+              } catch (e) {
+                console.error("Error parsing JSON:", e);
+                continue;
+              }
+            }
+          }
+        }
+
       } catch (err) {
         console.error(err);
         addMessage('サーバーとの通信中にエラーが発生しました。', 'ai');
@@ -212,13 +274,14 @@
         });
 
         if (!response.ok) {
-          throw new Error('TTSリクエストに失敗しました。');
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'TTSリクエストに失敗しました。');
         }
 
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         const audio = new Audio(audioUrl);
-        audio.play();
+        await audio.play();
       } catch (err) {
         console.error(err);
         addMessage('音声再生中にエラーが発生しました。', 'ai');
