@@ -6,4 +6,3 @@ requests==2.31.0
 openai==0.27.0
 gunicorn
 io==0.1.16
-logging==
