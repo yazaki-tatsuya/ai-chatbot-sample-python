@@ -141,7 +141,11 @@ def tts():
         speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
 
         # 音声出力形式をMP3に設定
-        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
+        #   音声出力形式の確認: 既にMP3形式に変更していますが、さらに低ビットレートのMP3を使用することで、
+        #   音声データのサイズを小さくし、転送時間を短縮できます。ただし、音質とのバランスを考慮する必要があります。
+        # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
+        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
+
 
         # SSMLで速度を設定（オプション）
         ssml = f"""
@@ -181,4 +185,6 @@ def tts():
 
 if __name__ == "__main__":
     # ローカルデバッグ用
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # app.run(debug=True, host="0.0.0.0", port=5000)
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=5000)

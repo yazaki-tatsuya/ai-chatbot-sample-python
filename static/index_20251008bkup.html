@@ -1,13 +1,13 @@
-<!-- 
- 【再生スピード】
-フェッチと再生が並行して進む構造（fetchTTS と playAudio を分離）。
-次の音声再生が事前にフェッチされるため、スムーズな音声再生が可能。
-特に複数の短い文を連続で再生する場合、Bのほうが迅速に再生できる。
+<!--
+【再生スピード】 
+音声再生の実行は enqueueTTSRequest と playNextAudio でシンプルに管理。
+音声再生は順次処理で行われ、次の音声再生を待つため、再生のスピードに影響がある可能性。
+再生中のTTSデータ取得と次の再生準備が独立しておらず、リアルタイム性が少し劣る。 
 
 【音声の重複防止】
-音声再生も playNextAudio 関数で管理されますが、再生中に次のフレーズを事前にフェッチする部分が追加されています。
-audio.onended イベントの後に次のフレーズが再生される点はAと同じ。
-フェッチと再生が並行して行われるため、次のフレーズが速やかに再生されるだけで、再生が重なることはありません。
+音声再生は playNextAudio 関数でキューから順次取り出して処理されます。
+再生中 (isPlaying = true) の場合、次の音声再生はキューに追加されるだけで再生されません。
+audio.onended イベントが発生してから次のフレーズが再生されるため、フレーズが重なることはありません。
 -->
 <!-- static/index.html -->
 <!DOCTYPE html>
@@ -49,7 +49,6 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
     // 音声再生のキューと再生状態の管理
     let audioQueue = [];
     let isPlaying = false;
-    let preFetchedAudio = null; // 次に再生する音声データのバッファ
 
     // ローカルストレージから会話履歴を読み込む
     window.onload = function() {
@@ -286,59 +285,55 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       }
     }
 
-    async function playNextAudio() {
+    function playNextAudio() {
       if (audioQueue.length === 0) {
         isPlaying = false;
         return;
       }
       isPlaying = true;
       const text = audioQueue.shift();
-      try {
-        // フェッチと再生を並行して行う
-        const fetchPromise = fetchTTS(text);
-        const audioBlob = await fetchPromise;
-        await playAudio(audioBlob);
-        // 次の音声再生を開始
+      sendTTSRequest(text).then(() => {
         playNextAudio();
+      }).catch(err => {
+        console.error(err);
+        addMessage('音声再生中にエラーが発生しました。', 'ai');
+        playNextAudio();
+      });
+    }
+
+    async function sendTTSRequest(text) {
+      try {
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ text: text })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'TTSリクエストに失敗しました。');
+        }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+
+        return new Promise((resolve, reject) => {
+          audio.onended = () => {
+            resolve();
+          };
+          audio.onerror = () => {
+            reject(new Error('音声再生に失敗しました。'));
+          };
+          audio.play();
+        });
       } catch (err) {
         console.error(err);
         addMessage('音声再生中にエラーが発生しました。', 'ai');
-        // エラーが発生しても次の音声再生を継続
-        playNextAudio();
+        throw err;
       }
-    }
-
-    async function fetchTTS(text) {
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text: text })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'TTSリクエストに失敗しました。');
-      }
-
-      const audioBlob = await response.blob();
-      return audioBlob;
-    }
-
-    async function playAudio(audioBlob) {
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-
-      return new Promise((resolve, reject) => {
-        audio.onended = () => {
-          resolve();
-        };
-        audio.onerror = () => {
-          reject(new Error('音声再生に失敗しました。'));
-        };
-        audio.play();
-      });
     }
   </script>
 </body>

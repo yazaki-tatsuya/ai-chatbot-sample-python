@@ -4,4 +4,6 @@ azure-cognitiveservices-speech==1.28.0
 flask-cors==3.0.10
 requests==2.31.0
 openai==0.27.0
-gunicorn
+# Gunicorn requires fcntl, which is Unix-specific. Therefore, it does not work on Windows.
+# gunicorn==23.0.0
+waitress==3.0.1
