@@ -35,6 +35,10 @@
     let conversationHistory = []; // 会話履歴を保持する配列
     let accumulatedPartialText = ''; // AIの部分的な応答を蓄積する変数
 
+    // 音声再生のキューと再生状態の管理
+    let audioQueue = [];
+    let isPlaying = false;
+
     // ローカルストレージから会話履歴を読み込む
     window.onload = function() {
       const savedHistory = localStorage.getItem('conversationHistory');
@@ -231,7 +235,7 @@
                 if (content === "【END】") {
                   // 送信が終了したことを示す
                   if (accumulatedPartialText.trim() !== '') {
-                    await sendTTSRequest(accumulatedPartialText.trim());
+                    enqueueTTSRequest(accumulatedPartialText.trim());
                     accumulatedPartialText = '';
                   }
                   continue;
@@ -246,7 +250,7 @@
                   const sentence = accumulatedPartialText.slice(0, sentenceEndIndex + 1);
                   accumulatedPartialText = accumulatedPartialText.slice(sentenceEndIndex + 1);
                   addMessage(sentence, 'ai'); // AIのメッセージをチャットに追加
-                  await sendTTSRequest(sentence); // 完全な文をTTSに送信
+                  enqueueTTSRequest(sentence); // 完全な文をTTSに送信
                 }
 
               } catch (e) {
@@ -261,6 +265,29 @@
         console.error(err);
         addMessage('サーバーとの通信中にエラーが発生しました。', 'ai');
       }
+    }
+
+    function enqueueTTSRequest(text) {
+      audioQueue.push(text);
+      if (!isPlaying) {
+        playNextAudio();
+      }
+    }
+
+    function playNextAudio() {
+      if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+      }
+      isPlaying = true;
+      const text = audioQueue.shift();
+      sendTTSRequest(text).then(() => {
+        playNextAudio();
+      }).catch(err => {
+        console.error(err);
+        addMessage('音声再生中にエラーが発生しました。', 'ai');
+        playNextAudio();
+      });
     }
 
     async function sendTTSRequest(text) {
@@ -281,10 +308,20 @@
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         const audio = new Audio(audioUrl);
-        await audio.play();
+
+        return new Promise((resolve, reject) => {
+          audio.onended = () => {
+            resolve();
+          };
+          audio.onerror = () => {
+            reject(new Error('音声再生に失敗しました。'));
+          };
+          audio.play();
+        });
       } catch (err) {
         console.error(err);
         addMessage('音声再生中にエラーが発生しました。', 'ai');
+        throw err;
       }
     }
   </script>
