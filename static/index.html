@@ -29,6 +29,9 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
     button { padding: 10px 20px; margin: 5px; }
     #status { margin-top: 10px; }
     #result { margin-top: 10px; font-weight: bold; }
+    #textInputContainer { margin-top: 20px; }
+    #textInput { width: 80%; padding: 10px; }
+    #sendBtn { padding: 10px 20px; }
   </style>
 </head>
 <body>
@@ -39,6 +42,12 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
   <button id="resetBtn">リセット</button>
   <p id="status"></p>
   <p id="result"></p>
+  
+  <!-- テキスト入力フィールドと送信ボタンの追加 -->
+  <div id="textInputContainer">
+    <input type="text" id="textInput" placeholder="メッセージを入力..." />
+    <button id="sendBtn">送信</button>
+  </div>
 
   <script>
     let audioConfig, speechRecognizer;
@@ -278,6 +287,24 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         addMessage('サーバーとの通信中にエラーが発生しました。', 'ai');
       }
     }
+
+    // テキスト入力からのメッセージ送信処理
+    document.getElementById("sendBtn").onclick = function() {
+      const textInput = document.getElementById("textInput");
+      const message = textInput.value.trim();
+      if (message === "") return;
+      textInput.value = ""; // 入力フィールドをクリア
+      addMessage(message, 'user'); // チャットにユーザーメッセージを追加
+      sendChatAndStreamResponse(message); // AIにメッセージを送信
+    };
+
+    // Enterキーで送信できるようにする
+    document.getElementById("textInput").addEventListener("keypress", function(event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        document.getElementById("sendBtn").click();
+      }
+    });
 
     function enqueueTTSRequest(text) {
       audioQueue.push(text);
