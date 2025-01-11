@@ -1,4 +1,14 @@
 # app.py
+'''
+音声出力形式の設定:
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3) が正しく設定されています。
+MIMEタイプの設定:
+    音声データを返す際の mimetype が audio/mpeg に設定されています。
+エンドマーカーの処理:
+    "【END】" マーカーを受信した際に、{'status': 'completed'} を返すことで、フロントエンドに会話終了を通知しています。
+エラーハンドリングの強化:
+    音声合成が失敗した場合やキャンセルされた場合のエラーメッセージを適切に返しています。
+'''
 import os
 import requests
 from flask import Flask, jsonify, send_from_directory, request, Response, stream_with_context
