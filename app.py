@@ -35,9 +35,17 @@ OPENAI_API_KEY = env_production.get_env_variable("OPENAI_API_KEY")
 # OpenAIの設定
 openai.api_key = OPENAI_API_KEY
 
-# トークンキャッシュ用変数
-cached_token = None
-token_expiry = 0  # UNIXタイムスタンプ
+# グローバルなSpeechSynthesizerの初期化
+try:
+    speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
+    speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
+    speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+    logger.info("SpeechSynthesizer initialized successfully.")
+except Exception as e:
+    logger.exception("Failed to initialize SpeechSynthesizer.")
+    synthesizer = None  # エラーハンドリングを適切に行う
 
 @app.route("/")
 def index():
@@ -135,6 +143,10 @@ def tts():
     """
     AIからの部分的なテキストを受け取り、Azure TextToSpeechで音声化したデータを返すエンドポイント。
     """
+    if synthesizer is None:
+        logger.error("SpeechSynthesizer is not initialized.")
+        return jsonify({'error': 'SpeechSynthesizer initialization failed.'}), 500
+
     try:
         data = request.get_json()
         if not data or 'text' not in data:
@@ -148,18 +160,19 @@ def tts():
 
         # 文章の終わりを確認
         if text.strip() == "【END】":
+            logger.info("Received 【END】 signal. No TTS needed.")
             return jsonify({'status': 'completed'}), 200
 
-        # Azure Speech SDKの設定
-        speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
-        speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
-        speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
+        # # Azure Speech SDKの設定
+        # speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
+        # speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
+        # speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
 
-        # 音声出力形式をMP3に設定
-        #   音声出力形式の確認: 既にMP3形式に変更していますが、さらに低ビットレートのMP3を使用することで、
-        #   音声データのサイズを小さくし、転送時間を短縮できます。ただし、音質とのバランスを考慮する必要があります。
-        # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
-        speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
+        # # 音声出力形式をMP3に設定
+        # #   音声出力形式の確認: 既にMP3形式に変更していますが、さらに低ビットレートのMP3を使用することで、
+        # #   音声データのサイズを小さくし、転送時間を短縮できます。ただし、音質とのバランスを考慮する必要があります。
+        # # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
+        # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
 
 
         # SSMLで速度を設定（オプション）
@@ -171,14 +184,25 @@ def tts():
         </speak>
         """
 
-        # SpeechSynthesizerを作成（音声出力なし）
-        synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+        # # SpeechSynthesizerを作成（音声出力なし）
+        # synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
+        # result = synthesizer.speak_ssml_async(ssml).get()
+
+        # TTS開始時間の記録
+        start_time = time.time()
+
+        # SpeechSynthesizerを使用して音声合成
         result = synthesizer.speak_ssml_async(ssml).get()
+
+        # TTS処理時間のログ
+        tts_duration = time.time() - start_time
+        logger.info(f"TTS processing time: {tts_duration:.2f} seconds for text: {text}")
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             # SpeechSynthesisResultのaudio_dataを取得
             audio_data = result.audio_data  # バイト列として取得
 
+            logger.info("TTS synthesis completed successfully.")
             # 音声データを返却（MIMEタイプをaudio/mpegに変更）
             return Response(audio_data, mimetype="audio/mpeg")
 
@@ -191,7 +215,7 @@ def tts():
             return jsonify({'error': error_message}), 500
 
         else:
-            logger.error("Speech synthesis failed")
+            logger.error("Speech synthesis failed for an unknown reason.")
             return jsonify({'error': 'Speech synthesis failed'}), 500
 
     except Exception as e:
@@ -202,4 +226,5 @@ if __name__ == "__main__":
     # ローカルデバッグ用
     # app.run(debug=True, host="0.0.0.0", port=5000)
     from waitress import serve
+    # Waitressのスレッド数を増やして並行処理能力を向上（必要に応じて調整）
     serve(app, host="0.0.0.0", port=5000, threads=8)
