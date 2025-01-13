@@ -40,7 +40,12 @@ try:
     speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
     speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
     speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
+    # ビットレートをさらに下げる
+    #   既定では Audio16Khz128KBitRateMonoMp3 を使っているところを
+    #   Audio16Khz32KBitRateMonoMp3 等に変更し、音声ファイルサイズをさらに小さく。
+    #   (ただし音質低下とのトレードオフに注意)
     speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
+    # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3)
     synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
     logger.info("SpeechSynthesizer initialized successfully.")
 except Exception as e:
@@ -107,8 +112,12 @@ def chat():
                 return
 
             # システムメッセージを先頭に追加
+            system_prompt = """
+            あなたは役立つAIアシスタントです。
+            まずは相槌をし、その後に詳しい説明を続けてください。
+            """
             messages = [
-                {"role": "system", "content": "あなたは役立つAIアシスタントです。"}
+                {"role": "system", "content": system_prompt}
             ]
 
             messages.extend(conversation)  # 会話履歴を追加
@@ -177,6 +186,7 @@ def tts():
 
         # SpeechSynthesizerを使用して音声合成
         result = synthesizer.speak_ssml_async(ssml).get()
+        # result = synthesizer.speak_text_async(text.strip()).get()
 
         # TTS処理時間のログ
         tts_duration = time.time() - start_time
@@ -215,24 +225,25 @@ def warmup():
         logger.error("SpeechSynthesizer is not initialized.")
         return jsonify({'error': 'SpeechSynthesizer initialization failed.'}), 500
 
+    dummy_text = "これはウォームアップ用のダミーテキストです。"
+    ssml = f"""
+    <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">
+        <voice name="{speech_config.speech_synthesis_voice_name}">
+            <prosody rate="150%">{dummy_text}</prosody>
+        </voice>
+    </speak>
+    """
+    start_time = time.time()
     try:
-        dummy_text = "ウォームアップ用のダミーテキストです。"
-        ssml = f"""
-        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">
-            <voice name="{speech_config.speech_synthesis_voice_name}">
-                <prosody rate="150%">{dummy_text}</prosody>
-            </voice>
-        </speak>
-        """
-
-        start_time = time.time()
+        # SpeechSynthesizerを使用して音声合成
         result = synthesizer.speak_ssml_async(ssml).get()
-        warmup_duration = time.time() - start_time
-        logger.info(f"Warmup TTS processing time: {warmup_duration:.2f} seconds.")
+        elapsed = time.time() - start_time
+
+        logger.info(f"Warmup TTS processing time: {elapsed:.2f} seconds.")
 
         if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             logger.info("Warmup TTS succeeded.")
-            return jsonify({'status': 'warmup_completed', 'duration': warmup_duration}), 200
+            return jsonify({'status': 'warmup_completed', 'duration': elapsed}), 200
         else:
             logger.error("Warmup TTS failed or canceled.")
             return jsonify({'error': 'Warmup TTS failed or canceled.'}), 500
