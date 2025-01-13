@@ -269,7 +269,13 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
                 if (content === "【END】") {
                   // 送信が終了したことを示す
                   if (accumulatedPartialText.trim() !== '') {
-                    enqueueTTSRequest(accumulatedPartialText.trim());
+                    // enqueueTTSRequest(accumulatedPartialText.trim());
+                    // ★変更前★
+                    // await sendTTSRequest(accumulatedPartialText.trim());
+                    // → テキスト表示後に「待って」TTS呼び出ししていた
+
+                    // ★変更後★: 非同期で呼び出し (並行実行)
+                    sendTTSRequest(accumulatedPartialText.trim()); 
                     accumulatedPartialText = '';
                   }
                   continue;
@@ -284,7 +290,13 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
                   const sentence = accumulatedPartialText.slice(0, sentenceEndIndex + 1);
                   accumulatedPartialText = accumulatedPartialText.slice(sentenceEndIndex + 1);
                   addMessage(sentence, 'ai'); // AIのメッセージをチャットに追加
-                  enqueueTTSRequest(sentence); // 完全な文をTTSに送信
+                  // enqueueTTSRequest(sentence); // 完全な文をTTSに送信
+                  // ★変更前★
+                  // await sendTTSRequest(sentence);
+                  // → テキスト表示を待ってから音声を呼び出し、結果的に遅れる
+
+                  // ★変更後★
+                  sendTTSRequest(sentence); // 並列呼び出し
                 }
 
               } catch (e) {
@@ -361,6 +373,11 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         addMessage('音声再生中にエラーが発生しました。', 'ai');
         isPlaying = false;
       }
+    }
+
+    async function sendTTSRequest(text) {
+      // 音声キューに追加して再生開始
+      enqueueTTSRequest(text);
     }
     
     async function fetchTTS(text) {
