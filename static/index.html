@@ -250,6 +250,8 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         conversationHistory.push({ role: 'user', content: message });
       } else if (sender === 'ai') {
         conversationHistory.push({ role: 'assistant', content: message });
+        // ★ ここでTTSを呼び出す(最小限変更) ★
+        sendTTSRequest(message);
       }
 
       // チャット履歴をローカルストレージに保存
@@ -293,20 +295,16 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
                 const content = data.content;
                 if (content === "【END】") {
                   // 送信が終了したことを示す
-                  if (accumulatedPartialText.trim() !== '') {
-                    // enqueueTTSRequest(accumulatedPartialText.trim());
-                    // ★変更前★
-                    // await sendTTSRequest(accumulatedPartialText.trim());
-                    // → テキスト表示後に「待って」TTS呼び出ししていた
-
-                    // ★変更後★: 非同期で呼び出し (並行実行)
-                    sendTTSRequest(accumulatedPartialText.trim()); 
+                  if (accumulatedPartialText.trim() !== '') {                    
+                    // enqueueTTSRequest(accumulatedPartialText.trim()); // 音声キューに追加
+                    // await sendTTSRequest(accumulatedPartialText.trim()); // テキスト表示後に「待って」TTS呼び出ししていた
+                    // sendTTSRequest(accumulatedPartialText.trim()); // 非同期で呼び出し (並行実行)
                     accumulatedPartialText = '';
                   }
                   continue;
                 }
 
-                // Append to accumulatedPartialText
+                // 従来: while文で文末判定し addMessage, sendTTSRequest していたが削除
                 accumulatedPartialText += content;
 
                 // Check for sentence boundary (。、！、？)
@@ -315,13 +313,10 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
                   const sentence = accumulatedPartialText.slice(0, sentenceEndIndex + 1);
                   accumulatedPartialText = accumulatedPartialText.slice(sentenceEndIndex + 1);
                   addMessage(sentence, 'ai'); // AIのメッセージをチャットに追加
+                  
                   // enqueueTTSRequest(sentence); // 完全な文をTTSに送信
-                  // ★変更前★
-                  // await sendTTSRequest(sentence);
-                  // → テキスト表示を待ってから音声を呼び出し、結果的に遅れる
-
-                  // ★変更後★
-                  sendTTSRequest(sentence); // 並列呼び出し
+                  // await sendTTSRequest(sentence); //テキスト表示を待ってから音声を呼び出し、結果的に遅れる
+                  // sendTTSRequest(sentence); // 並列呼び出し
                 }
 
               } catch (e) {
