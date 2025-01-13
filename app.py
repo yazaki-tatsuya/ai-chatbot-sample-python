@@ -44,8 +44,8 @@ try:
     #   既定では Audio16Khz128KBitRateMonoMp3 を使っているところを
     #   Audio16Khz32KBitRateMonoMp3 等に変更し、音声ファイルサイズをさらに小さく。
     #   (ただし音質低下とのトレードオフに注意)
-    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
-    # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3)
+    #speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3)
     synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
     logger.info("SpeechSynthesizer initialized successfully.")
 except Exception as e:
