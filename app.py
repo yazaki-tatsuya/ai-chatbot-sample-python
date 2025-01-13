@@ -124,7 +124,8 @@ def chat():
 
             # OpenAI GPT-4との対話（ストリーミング）
             response = openai.ChatCompletion.create(
-                model="gpt-4",
+                # model="gpt-4",
+                model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=300,
                 stream=True  # ストリーミングを有効化
