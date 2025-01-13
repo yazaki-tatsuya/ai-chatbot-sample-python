@@ -61,11 +61,22 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
     let preFetchedAudio = null; // 次に再生する音声データのバッファ
 
     // ローカルストレージから会話履歴を読み込む
-    window.onload = function() {
+    window.onload = async function() {
+      // 既存の会話履歴をローカルストレージから読み込み
       const savedHistory = localStorage.getItem('conversationHistory');
       if (savedHistory) {
         conversationHistory = JSON.parse(savedHistory);
-        conversationHistory.forEach(msg => addMessage(msg.content, msg.role === 'user' ? 'user' : 'ai'));
+        conversationHistory.forEach(msg => addMessage(msg.content, (msg.role === 'user' ? 'user' : 'ai')));
+      }
+
+      // ウォームアップ用のエンドポイントを呼び出し
+      try {
+        console.log("Warming up TTS service...");
+        const resp = await fetch("/api/warmup");
+        const data = await resp.json();
+        console.log("Warmup result:", data);
+      } catch (e) {
+        console.warn("Warmup failed:", e);
       }
     };
 
@@ -76,11 +87,11 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
 
     document.getElementById("startBtn").onclick = async function() {
       document.getElementById("status").innerText = "トークン取得中...";
-      accumulatedText = ''; // 認識開始前に蓄積テキストをリセット
-      accumulatedPartialText = ''; // AIの部分的な応答もリセット
+      accumulatedText = '';        // 音声認識開始前に一時的な蓄積テキストをリセット
+      accumulatedPartialText = ''; // AIからの応答テキストもリセット
 
       try {
-        // サーバー(Flask)からトークンとリージョンをGET
+        // サーバー(Flask)からSpeechトークンとリージョンをGET
         let resp = await fetch("/token");
         let data = await resp.json();
         if (data.error) {
@@ -93,7 +104,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         let speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
         speechConfig.speechRecognitionLanguage = "ja-JP"; // 必要に応じて
 
-        // タイムアウト設定の変更
+        // 長い無音に備えてタイムアウトを延長（必要に応じて調整）
         // EndSilenceTimeoutMs を30秒に設定（デフォルトは5000ms）
         speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "30000");
 
@@ -103,7 +114,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         // ノイズ抑制の有効化（オプション）
         speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EnableNoiseSuppression, "true");
 
-        // マイクアクセス(ユーザーが「許可」する必要あり)
+        // マイクアクセス許可を要求 (ユーザーが「許可」する必要あり)
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
 
@@ -111,20 +122,20 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         speechRecognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
         document.getElementById("status").innerText = "音声認識を開始します...";
 
-        // 認識開始イベント
+        // イベント: 認識セッション開始
         speechRecognizer.sessionStarted = (s, e) => {
           console.log("sessionStarted");
           document.getElementById("status").innerText = "録音中...(話してください)";
         };
 
-        // 認識途中のイベント (部分的な結果)
+        // イベント: 認識途中のイベント (部分的な結果)
         speechRecognizer.recognizing = (s, e) => {
           console.log("Recognizing:", e.result.text);
           document.getElementById("result").innerText = "途中結果: " + e.result.text;
           // 部分結果は蓄積しない
         };
 
-        // 認識確定イベント (最終結果)
+        // イベント: 認識確定イベント (最終結果)
         speechRecognizer.recognized = (s, e) => {
           console.log("Recognized:", e.result);
           if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
@@ -135,7 +146,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
           }
         };
 
-        // セッション終了(マイク停止など)
+        // イベント: セッション終了(マイク停止など)
         speechRecognizer.sessionStopped = (s, e) => {
           console.log("sessionStopped");
           document.getElementById("status").innerText = "認識セッションが終了しました。";
@@ -144,13 +155,15 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
           document.getElementById("resetBtn").disabled = false;
 
           if (accumulatedText.trim() !== '') {
-            addMessage(accumulatedText.trim(), 'user'); // ユーザーのメッセージをチャットに追加
-            sendChatAndStreamResponse(accumulatedText.trim()); // AIにメッセージを送信してストリーミング応答を処理
+            // ユーザーの発話をチャット欄に追加＆AIにリクエスト
+            addMessage(accumulatedText.trim(), 'user');
+            // AIにメッセージを送信してストリーミング応答を処理
+            sendChatAndStreamResponse(accumulatedText.trim());
           }
           accumulatedText = ''; // 蓄積テキストをリセット
         };
 
-        // エラーイベント
+        // イベント: キャンセルやエラー
         speechRecognizer.canceled = (s, e) => {
           console.warn("canceled", e);
           document.getElementById("status").innerText = "キャンセルまたはエラー";
@@ -160,7 +173,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
           accumulatedText = ''; // 蓄積テキストをリセット
         };
 
-        // 実際に認識開始
+        // 音声認識を開始
         speechRecognizer.startContinuousRecognitionAsync();
         document.getElementById("startBtn").disabled = true;
         document.getElementById("stopBtn").disabled = false;
@@ -170,7 +183,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         document.getElementById("status").innerText = "エラー: " + err.message;
       }
     };
-
+    // 音声認識停止ボタン
     document.getElementById("stopBtn").onclick = function() {
       if (speechRecognizer) {
         speechRecognizer.stopContinuousRecognitionAsync(
@@ -198,7 +211,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       document.getElementById("resetBtn").disabled = true; // リセットボタンを無効化
       localStorage.removeItem('conversationHistory'); // ローカルストレージをクリア
     };
-
+    // チャット欄にメッセージを追加
     function addMessage(message, sender) {
       const chatDiv = document.getElementById('chat');
       const messageDiv = document.createElement('div');
@@ -288,7 +301,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       }
     }
 
-    // テキスト入力からのメッセージ送信処理
+    // テキスト入力の送信ボタン
     document.getElementById("sendBtn").onclick = function() {
       const textInput = document.getElementById("textInput");
       const message = textInput.value.trim();
@@ -306,6 +319,9 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       }
     });
 
+    // --------------------------
+    // 音声再生キューの管理ロジック
+    // --------------------------
     function enqueueTTSRequest(text) {
       audioQueue.push(text);
       playNextAudio(); // 常に playNextAudio を呼び出す
@@ -323,7 +339,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       try {
         audioBlob = await fetchTTS(text);
       } catch (err) {
-        console.error(err);
+        console.error("fetchTTS error:", err);
         addMessage('音声フェッチ中にエラーが発生しました。', 'ai');
         isPlaying = false;
         return;
@@ -341,7 +357,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
           playNextAudio();
         });
       } catch (err) {
-        console.error(err);
+        console.error("playAudio error:",err);
         addMessage('音声再生中にエラーが発生しました。', 'ai');
         isPlaying = false;
       }

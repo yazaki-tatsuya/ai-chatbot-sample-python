@@ -163,18 +163,6 @@ def tts():
             logger.info("Received 【END】 signal. No TTS needed.")
             return jsonify({'status': 'completed'}), 200
 
-        # # Azure Speech SDKの設定
-        # speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_SPEECH_REGION)
-        # speech_config.speech_synthesis_language = "ja-JP"  # 必要に応じて変更
-        # speech_config.speech_synthesis_voice_name = "ja-JP-NanamiNeural"  # 必要に応じて変更
-
-        # # 音声出力形式をMP3に設定
-        # #   音声出力形式の確認: 既にMP3形式に変更していますが、さらに低ビットレートのMP3を使用することで、
-        # #   音声データのサイズを小さくし、転送時間を短縮できます。ただし、音質とのバランスを考慮する必要があります。
-        # # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3)
-        # speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3)
-
-
         # SSMLで速度を設定（オプション）
         ssml = f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">
@@ -183,10 +171,6 @@ def tts():
             </voice>
         </speak>
         """
-
-        # # SpeechSynthesizerを作成（音声出力なし）
-        # synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
-        # result = synthesizer.speak_ssml_async(ssml).get()
 
         # TTS開始時間の記録
         start_time = time.time()
@@ -220,6 +204,41 @@ def tts():
 
     except Exception as e:
         logger.exception("Exception in /api/tts endpoint")
+        return jsonify({'error': str(e)}), 500
+
+@app.route("/api/warmup", methods=["GET"])
+def warmup():
+    """
+    サーバー起動直後やアイドル状態から復帰した際に、TTSを事前に呼び出してウォームアップを行う。
+    """
+    if synthesizer is None:
+        logger.error("SpeechSynthesizer is not initialized.")
+        return jsonify({'error': 'SpeechSynthesizer initialization failed.'}), 500
+
+    try:
+        dummy_text = "ウォームアップ用のダミーテキストです。"
+        ssml = f"""
+        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="ja-JP">
+            <voice name="{speech_config.speech_synthesis_voice_name}">
+                <prosody rate="150%">{dummy_text}</prosody>
+            </voice>
+        </speak>
+        """
+
+        start_time = time.time()
+        result = synthesizer.speak_ssml_async(ssml).get()
+        warmup_duration = time.time() - start_time
+        logger.info(f"Warmup TTS processing time: {warmup_duration:.2f} seconds.")
+
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            logger.info("Warmup TTS succeeded.")
+            return jsonify({'status': 'warmup_completed', 'duration': warmup_duration}), 200
+        else:
+            logger.error("Warmup TTS failed or canceled.")
+            return jsonify({'error': 'Warmup TTS failed or canceled.'}), 500
+
+    except Exception as e:
+        logger.exception("Exception in /api/warmup endpoint")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
