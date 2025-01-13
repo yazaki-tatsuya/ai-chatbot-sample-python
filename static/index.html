@@ -69,14 +69,39 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
         conversationHistory.forEach(msg => addMessage(msg.content, (msg.role === 'user' ? 'user' : 'ai')));
       }
 
-      // ウォームアップ用のエンドポイントを呼び出し
+      // ページロード時にウォームアップAPIをコール
       try {
-        console.log("Warming up TTS service...");
-        const resp = await fetch("/api/warmup");
-        const data = await resp.json();
-        console.log("Warmup result:", data);
-      } catch (e) {
-        console.warn("Warmup failed:", e);
+        const warmResp = await fetch("/api/warmup");
+        if (warmResp.ok) {
+          const warmData = await warmResp.json();
+          console.log("Warmup success:", warmData);
+          
+        } else {
+          console.warn("Warmup request failed");
+        }
+      } catch (err) {
+        console.warn("Warmup fetch error:", err);
+      }
+
+      // (A) 1文字程度の超短いテキスト (例: "ウォームアップ")
+      const dummyShortText = "ウォームアップ";
+      try {
+        // "/api/tts" にPOSTし、音声を取得。再生せず捨てる。
+        console.log("Dummy TTS start for warmup...");
+        const resp = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: dummyShortText })
+        });
+        if (resp.ok) {
+          // 音声データを受け取るが再生せず破棄
+          const audioBlob = await resp.blob();
+          console.log("Dummy TTS warmup completed.");
+        } else {
+          console.warn("Dummy TTS warmup failed:", resp.statusText);
+        }
+      } catch (err) {
+        console.warn("Dummy TTS warmup error:", err);
       }
     };
 
