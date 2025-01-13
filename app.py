@@ -18,6 +18,7 @@ import env_production
 import azure.cognitiveservices.speech as speechsdk
 import logging
 import json
+import time  # トークンキャッシュ用に追加
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)  # クロスオリジンリクエストを許可
@@ -33,6 +34,10 @@ OPENAI_API_KEY = env_production.get_env_variable("OPENAI_API_KEY")
 
 # OpenAIの設定
 openai.api_key = OPENAI_API_KEY
+
+# トークンキャッシュ用変数
+cached_token = None
+token_expiry = 0  # UNIXタイムスタンプ
 
 @app.route("/")
 def index():
@@ -197,4 +202,4 @@ if __name__ == "__main__":
     # ローカルデバッグ用
     # app.run(debug=True, host="0.0.0.0", port=5000)
     from waitress import serve
-    serve(app, host="0.0.0.0", port=5000)
+    serve(app, host="0.0.0.0", port=5000, threads=8)
