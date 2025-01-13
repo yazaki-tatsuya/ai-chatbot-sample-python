@@ -308,45 +308,39 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
 
     function enqueueTTSRequest(text) {
       audioQueue.push(text);
-      playNextAudio(); // 常に playNextAudio を呼び出す
+      if (!isPlaying) {
+        playNextAudio();
+      }
     }
 
     async function playNextAudio() {
-      if (isPlaying || audioQueue.length === 0) {
-        return; // 既に再生中またはキューが空の場合は何もしない
-      }
-      isPlaying = true;
-
-      const text = audioQueue.shift(); // キューから最初のテキストを取得
-      let audioBlob;
-
-      try {
-        audioBlob = await fetchTTS(text);
-      } catch (err) {
-        console.error(err);
-        addMessage('音声フェッチ中にエラーが発生しました。', 'ai');
+      if (audioQueue.length === 0) {
         isPlaying = false;
         return;
       }
-
+      isPlaying = true;
+      const text = audioQueue.shift();
       try {
-        // 次の音声を事前にフェッチ開始
+        // フェッチと再生を並行して行う
+        const fetchPromise = fetchTTS(text);
+        const audioBlob = await fetchPromise;
+        //音声フェッチと再生の並行処理
+        //  フロントエンドで音声フェッチと再生を並行して行うことで、音声再生の遅延を減少させます。
+        //  具体的には、現在の音声が再生されている間に次の音声をフェッチします。
         if (audioQueue.length > 0) {
           preFetchedAudio = fetchTTS(audioQueue[0]);
         }
-
-        await playAudio(audioBlob).then(() => {
-          isPlaying = false;
-          // 再生が終了したら次の音声を再生
-          playNextAudio();
-        });
+        await playAudio(audioBlob);
+        // 次の音声再生を開始
+        playNextAudio();
       } catch (err) {
         console.error(err);
         addMessage('音声再生中にエラーが発生しました。', 'ai');
-        isPlaying = false;
+        // エラーが発生しても次の音声再生を継続
+        playNextAudio();
       }
     }
-    
+
     async function fetchTTS(text) {
       const response = await fetch('/api/tts', {
         method: 'POST',
