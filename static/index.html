@@ -60,6 +60,26 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
     let isPlaying = false;
     let preFetchedAudio = null; // 次に再生する音声データのバッファ
 
+    // #####################################################
+    // (A) 新しい関数: "テキストをAIとして表示" + "先にTTSをダウンロード" + "音声再生" を同期的に行う
+    // #####################################################
+    async function addAiMessageSimultaneous(aiText) {
+      try {
+        // 1) 先にTTS音声データを取得 (ダウンロード完了待ち)
+        const audioBlob = await fetchTTS(aiText);
+
+        // 2) ダウンロード完了後、テキストを画面に表示
+        addMessage(aiText, 'ai');
+
+        // 3) すぐに音声再生開始
+        await playAudio(audioBlob);
+
+      } catch (err) {
+        console.error("addAiMessageSimultaneous error:", err);
+        addMessage(aiText + " (音声再生失敗)", 'ai');
+      }
+    }
+
     // ローカルストレージから会話履歴を読み込む
     window.onload = async function() {
       // 既存の会話履歴をローカルストレージから読み込み
@@ -251,7 +271,7 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       } else if (sender === 'ai') {
         conversationHistory.push({ role: 'assistant', content: message });
         // ★ ここでTTSを呼び出す(最小限変更) ★
-        sendTTSRequest(message);
+        // sendTTSRequest(message);
       }
 
       // チャット履歴をローカルストレージに保存
@@ -299,6 +319,8 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
                     // enqueueTTSRequest(accumulatedPartialText.trim()); // 音声キューに追加
                     // await sendTTSRequest(accumulatedPartialText.trim()); // テキスト表示後に「待って」TTS呼び出ししていた
                     // sendTTSRequest(accumulatedPartialText.trim()); // 非同期で呼び出し (並行実行)
+                    // (B) 文末確定 -> Simultaneous表示&音声
+                    await addAiMessageSimultaneous(accumulatedPartialText.trim()); 
                     accumulatedPartialText = '';
                   }
                   continue;
@@ -306,17 +328,13 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
 
                 // 従来: while文で文末判定し addMessage, sendTTSRequest していたが削除
                 accumulatedPartialText += content;
+                let idx;
+                while ((idx = accumulatedPartialText.search(/[。！？]/)) !== -1) {
+                  const sentence = accumulatedPartialText.slice(0, idx+1);
+                  accumulatedPartialText = accumulatedPartialText.slice(idx+1);
 
-                // Check for sentence boundary (。、！、？)
-                let sentenceEndIndex;
-                while ((sentenceEndIndex = accumulatedPartialText.search(/[。！？]/)) !== -1) {
-                  const sentence = accumulatedPartialText.slice(0, sentenceEndIndex + 1);
-                  accumulatedPartialText = accumulatedPartialText.slice(sentenceEndIndex + 1);
-                  addMessage(sentence, 'ai'); // AIのメッセージをチャットに追加
-                  
-                  // enqueueTTSRequest(sentence); // 完全な文をTTSに送信
-                  // await sendTTSRequest(sentence); //テキスト表示を待ってから音声を呼び出し、結果的に遅れる
-                  // sendTTSRequest(sentence); // 並列呼び出し
+                  // ### ここで一文確定 -> 音声DL完了後に画面表示 ###
+                  await addAiMessageSimultaneous(sentence);
                 }
 
               } catch (e) {
@@ -351,54 +369,54 @@ audio.onended イベントの後に次のフレーズが再生される点はA�
       }
     });
 
-    // --------------------------
-    // 音声再生キューの管理ロジック
-    // --------------------------
-    function enqueueTTSRequest(text) {
-      audioQueue.push(text);
-      playNextAudio(); // 常に playNextAudio を呼び出す
-    }
+    // // --------------------------
+    // // 音声再生キューの管理ロジック
+    // // --------------------------
+    // function enqueueTTSRequest(text) {
+    //   audioQueue.push(text);
+    //   playNextAudio(); // 常に playNextAudio を呼び出す
+    // }
 
-    async function playNextAudio() {
-      if (isPlaying || audioQueue.length === 0) {
-        return; // 既に再生中またはキューが空の場合は何もしない
-      }
-      isPlaying = true;
+    // async function playNextAudio() {
+    //   if (isPlaying || audioQueue.length === 0) {
+    //     return; // 既に再生中またはキューが空の場合は何もしない
+    //   }
+    //   isPlaying = true;
 
-      const text = audioQueue.shift(); // キューから最初のテキストを取得
-      let audioBlob;
+    //   const text = audioQueue.shift(); // キューから最初のテキストを取得
+    //   let audioBlob;
 
-      try {
-        audioBlob = await fetchTTS(text);
-      } catch (err) {
-        console.error("fetchTTS error:", err);
-        addMessage('音声フェッチ中にエラーが発生しました。', 'ai');
-        isPlaying = false;
-        return;
-      }
+    //   try {
+    //     audioBlob = await fetchTTS(text);
+    //   } catch (err) {
+    //     console.error("fetchTTS error:", err);
+    //     addMessage('音声フェッチ中にエラーが発生しました。', 'ai');
+    //     isPlaying = false;
+    //     return;
+    //   }
 
-      try {
-        // 次の音声を事前にフェッチ開始
-        if (audioQueue.length > 0) {
-          preFetchedAudio = fetchTTS(audioQueue[0]);
-        }
+    //   try {
+    //     // 次の音声を事前にフェッチ開始
+    //     if (audioQueue.length > 0) {
+    //       preFetchedAudio = fetchTTS(audioQueue[0]);
+    //     }
 
-        await playAudio(audioBlob).then(() => {
-          isPlaying = false;
-          // 再生が終了したら次の音声を再生
-          playNextAudio();
-        });
-      } catch (err) {
-        console.error("playAudio error:",err);
-        addMessage('音声再生中にエラーが発生しました。', 'ai');
-        isPlaying = false;
-      }
-    }
+    //     await playAudio(audioBlob).then(() => {
+    //       isPlaying = false;
+    //       // 再生が終了したら次の音声を再生
+    //       playNextAudio();
+    //     });
+    //   } catch (err) {
+    //     console.error("playAudio error:",err);
+    //     addMessage('音声再生中にエラーが発生しました。', 'ai');
+    //     isPlaying = false;
+    //   }
+    // }
 
-    async function sendTTSRequest(text) {
-      // 音声キューに追加して再生開始
-      enqueueTTSRequest(text);
-    }
+    // async function sendTTSRequest(text) {
+    //   // 音声キューに追加して再生開始
+    //   enqueueTTSRequest(text);
+    // }
     
     async function fetchTTS(text) {
       const response = await fetch('/api/tts', {
