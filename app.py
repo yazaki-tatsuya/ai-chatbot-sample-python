@@ -114,7 +114,7 @@ def chat():
             # システムメッセージを先頭に追加
             system_prompt = """
             あなたは役立つAIアシスタントです。
-            まずは相槌をし、その後に詳しい説明を続けてください。
+            回答をする前に、まずは短い相槌をしてください。
             """
             messages = [
                 {"role": "system", "content": system_prompt}
@@ -124,7 +124,6 @@ def chat():
 
             # OpenAI GPT-4との対話（ストリーミング）
             response = openai.ChatCompletion.create(
-                # model="gpt-4",
                 model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=300,
